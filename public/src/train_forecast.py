@@ -6,6 +6,7 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 class TrainForecast:
     def __init__(self):
         self.encoders = {}
+        self.chunksize = 100000
 
 
     def import_and_merge_data(self):
@@ -125,7 +126,10 @@ class TrainForecast:
                     self.encoders[col] = LabelEncoder()
                     df[f'{col}_encoded'] = self.encoders[col].fit_transform(df[col].astype(str))
                 else:
-                    df[f'{col}_encoded'] = self.encoders[col].transform(df[col].astype(str))
+                    le = self.encoders[col]
+                    vals = df[col].astype(str)
+                    mapping = {v: i for i, v in enumerate(le.classes_)}
+                    df[f'{col}_encoded'] = vals.map(mapping).fillna(-1).astype(int)
         
         # Ordena por data para features temporais
         df = df.sort_values(['pdv', 'produto', 'synthetic_date'])
@@ -184,12 +188,33 @@ class TrainForecast:
         df_pdv, df_transactions, df_products = self.import_and_merge_data()
         df_combined = self.data_merge(df_pdv, df_transactions, df_products)
 
-        df_weekly = self.weekly_aggregation(df_combined)
+        # Processamento em chunks para agregação semanal
+        chunks = []
+        for start in range(0, len(df_combined), self.chunksize):
+            end = start + self.chunksize
+            chunk = df_combined.iloc[start:end]
+            weekly_chunk = self.weekly_aggregation(chunk)
+            chunks.append(weekly_chunk)
+        df_weekly = pd.concat(chunks, ignore_index=True)
 
-        df_features = self.feature_engineering(df_weekly)
-        df_time_features = self.time_series_features(df_features)
+        features_chunks = []
+        for start in range(0, len(df_weekly), self.chunksize):
+            end = start + self.chunksize
+            chunk = df_weekly.iloc[start:end]
+            features_chunk = self.feature_engineering(chunk)
+            features_chunks.append(features_chunk)
+        df_features = pd.concat(features_chunks, ignore_index=True)
+
+        time_features_chunks = []
+        for start in range(0, len(df_features), self.chunksize):
+            end = start + self.chunksize
+            chunk = df_features.iloc[start:end]
+            time_features_chunk = self.time_series_features(chunk)
+            time_features_chunks.append(time_features_chunk)
+        df_time_features = pd.concat(time_features_chunks, ignore_index=True)
 
         print(df_time_features.head())
+        return df_time_features, None
 
 if __name__ == "__main__":
 
